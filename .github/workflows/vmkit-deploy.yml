@@ -1,0 +1,90 @@
+name: VMKit Deploy
+'on':
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        type: string
+      dest:
+        description: Deployment destination
+        required: true
+        type: string
+      instance_id:
+        description: VMKit instance ID
+        required: true
+        type: string
+      action:
+        description: Deploy action (deploy, rollback)
+        required: false
+        default: deploy
+        type: string
+env:
+  DEST: ${{ inputs.dest }}
+  SERVICE: vmkit-test-fullstack-${{ inputs.dest }}
+  REGISTRY: ghcr.io
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.branch }}
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Build and push image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        push: true
+        tags: ghcr.io/badri/vmkit-test-fullstack:${{ github.sha }},ghcr.io/badri/vmkit-test-fullstack:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    - name: Install Kamal
+      run: sudo gem install kamal
+    - name: Set up SSH
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.VMKIT_SSH_PRIVATE_KEY }}
+    - name: Resolve VM host
+      id: resolve
+      run: 'HOST=$(curl -sf -H "Authorization: Bearer ${{ secrets.VMKIT_SERVICE_KEY }}" "https://gateway.vmkit.dev/api/internal/instances/${{
+        inputs.instance_id }}/host")
+
+        echo "host=$HOST" >> "$GITHUB_OUTPUT"
+
+        ssh-keygen -R "$HOST" 2>/dev/null || true
+
+        ssh-keyscan "$HOST" >> ~/.ssh/known_hosts'
+    - name: Render Kamal secrets
+      run: envsubst < .kamal/secrets.${DEST}.tpl > .kamal/secrets.${DEST}
+      env:
+        DEST: ${{ inputs.dest }}
+        DEST_VM_HOST: ${{ steps.resolve.outputs.host }}
+        KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+    - name: Substitute DEST_VM_HOST in Kamal config
+      run: sed -i "s|\$DEST_VM_HOST|${DEST_VM_HOST}|g" config/deploy.${DEST}.yml
+      env:
+        DEST: ${{ inputs.dest }}
+        DEST_VM_HOST: ${{ steps.resolve.outputs.host }}
+    - name: Deploy with Kamal
+      run: cp config/deploy.${DEST}.yml config/deploy.yml && cp .kamal/secrets.${DEST} .kamal/secrets && kamal deploy
+      env:
+        DEST: ${{ inputs.dest }}
+        DEST_VM_HOST: ${{ steps.resolve.outputs.host }}
+    - name: Report deployed URL
+      if: always()
+      run: "curl -sf -X PATCH \\\n  -H \"Authorization: Bearer ${{ secrets.VMKIT_SERVICE_KEY }}\" \\\n  -H \"Content-Type:\
+        \ application/json\" \\\n  \"https://gateway.vmkit.dev/api/internal/deploys/by-run/${{ github.run_id }}/url\" \\\n\
+        \  -d '{\"url\": \"https://${{ steps.resolve.outputs.host }}\", \"image_tag\": \"ghcr.io/badri/vmkit-test-fullstack:${{\
+        \ github.sha }}\"}'"
