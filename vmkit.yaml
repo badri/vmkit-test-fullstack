@@ -1,0 +1,20 @@
+# VMKit manifest (v2 — informational today; the scanner still autodetects
+# from pyproject.toml. Once the backend learns to consume this file, the
+# values here take precedence over the scanner's inference and allow per-repo
+# accessory version pins.)
+
+framework: fastapi
+language: python
+language_version: ">=3.12"
+
+accessories:
+  - name: postgres
+    image: postgres:16-alpine
+  - name: redis
+    image: redis:7-alpine
+
+process_types:
+  web:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    port: 8000
+    health_path: /health

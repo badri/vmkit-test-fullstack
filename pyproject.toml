@@ -1,0 +1,11 @@
+[project]
+name = "vmkit-test-fullstack"
+version = "0.1.0"
+description = "VMKit test fixture: FastAPI + Postgres + Redis happy-path repo"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "asyncpg>=0.30",
+  "redis>=5.2",
+]
